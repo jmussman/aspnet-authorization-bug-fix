@@ -1,80 +1,79 @@
-# ASP.NET MVC + Okta
+# ASP.NET MVC + Okta Authorization Bug Fix
 
-This example shows how to use Okta, OpenID Connect, and ASP.NET MVC 4.x+.
+## Introduction
 
-You can follow the **[ quickstart](https://developer.okta.com/quickstart/#/okta-sign-in-page/dotnet/aspnet4)** for this project to see how it was created.
+This example is based on the Okta ASP.NET MVC example at https://github.com/oktadev/okta-aspnet-mvc-example
+which uses .NET Framework 4 (not Core).
+The instructions in that project to configure and run apply to this project.
 
-**Prerequisites:** [Visual Studio](https://www.visualstudio.com/downloads/) and Windows.
+The problem symptoms are that when a controller method is annotated with *[Authorize]* and the user
+is not authorized, the browser is repeatedly redirected for authorization but the IdP (Okta)
+has a session for the user and sends them right back, where the application again redirects
+for authentication creating an infinite loop..
 
-> [Okta](https://developer.okta.com/) has Authentication and User Management APIs that reduce development time with instant-on, scalable user infrastructure. Okta's intuitive API and expert support make it easy for developers to authenticate, manage and secure users and roles in any application.
+The root of the problem is that .NET Framework is returning an HTTP 401 instead of an HTTP 403 when
+the user is not authorized.
+This is in line with the HTTP standard prior to 2014.
+It was recognized as a problem because 401 had a double meaning (unauthenticated or unauthorized) and
+was changed in the standard.
+Current browser follow the current standard, and treat 403 as unauthorized and 401 as unauthenticated.
+Because of this, the 401 returned by framework 4 causes a loop trying to reauthenticate.
 
-* [Getting started](#getting-started)
-* [Links](#links)
-* [Help](#help)
-* [License](#license)
+The best solution is to override the implementation of the *AuthorizeAttribute* class
+and return an HTTP 403 instead of the 401!
 
-## Getting started
+## Program Tour
 
-To install this example application, clone this repository with Git:
+### Configuration
 
-```bash
-git clone https://github.com/oktadeveloper/okta-aspnet-mvc-example.git
-```
+The web.config file has been configured to communicate with an Okta
+application integration that uses OIDC with a Client ID and Secret.
+The application still uses "implicit" flow because that is how the
+example was built.
 
-Or download a zip archive of the repository from GitHub and extract it on your machine.
+The Okta application configuration:
 
-### Create an application in Okta
+![Application Integration](readme-resources/application-config.png)
 
-You will need to create an application in Okta to perform authentication. 
+### The Problem
 
-Log in to your Okta Developer account (or [sign up](https://developer.okta.com/signup/) if you don’t have an account) and navigate to **Applications** > **Add Application**. Click **Web**, click **Next**, and give the app a name you’ll remember.
-
-Change the **Base URI** to:
-
-```
-http://localhost:8080/
-```
-
-Change the **Login redirect URI** to:
-
-```
-http://localhost:8080/authorization-code/callback
-```
-
-Click **Done**. On the General Settings screen, click **Edit**.
-
-Check **Implicit (Hybrid)** and **Allow ID Token**. Add a **Logout redirect URI**:
+The problem was reproduced in this example by adding a *Secured* view and
+a link on the menu on the Home page with the corresponding controller method.
+In the controller the method has the *Authorize* annotation added:
 
 ```
-http://localhost:8080/Account/PostLogout
+[Authorize(Roles = "NobodyHasThisRole")]
+public ActionResult Secured() {
 ```
 
-**Note**: You can run the project in Visual Studio to see the port it is assigned on your machine. It may be different than 8080. In that case, you'll need to update the URIs in Okta.
+If our changes were stopped here, the program executed, and the user clicks
+on the *Secured* item on the Home page then the infinite loop starts.
 
-Scroll to the bottom of the Okta application page to find the client ID and client secret. You'll need those values in the next step.
+### The Solution - Override AuthorizeAttribute
 
-### Project configuration
+AuthorizeAttribute.cs is in the controllers folder alongside of HomeController.cs,
+so the controller uses it (closer) instead of the one in System.Web.Mvc.
+The *HandleUnauthorizedRequest* method is overridden to return HTTP 403:
 
-Open the `Web.config` file and update these values:
+```
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = true, AllowMultiple = true)]
+public class AuthorizeAttribute : System.Web.Mvc.AuthorizeAttribute {
+    protected override void HandleUnauthorizedRequest(System.Web.Mvc.AuthorizationContext filterContext) {
+        if (filterContext.HttpContext.Request.IsAuthenticated) {
+            filterContext.Result = new System.Web.Mvc.HttpStatusCodeResult((int)System.Net.HttpStatusCode.Forbidden);
+        } else {
+            base.HandleUnauthorizedRequest(filterContext);
+        }
+    }
+}
+```
 
-* `okta:ClientId` - The client ID of the Okta application
-* `okta:ClientSecret` - The client secret of the Okta application
-* `okta:OrgUri` - Replace `{yourOktaDomain}` with your Okta domain, found at the top-right of the Dashboard page.
-
-**Note:** The value of `{yourOktaDomain}` should be something like `dev-123456.oktapreview.com`. Make sure you don't include `-admin` in the value!
-
-### Start the application
-
-Use Visual Studio to run the project. It should start up on `http://localhost:8080`. (If it doesn't, update the URLs in Okta and in `Web.config`)
+With this in place the page request is rejected because the user isn't authorized.
 
 ## Links
 
 * [ASP.NET + Okta authentication quickstart](https://developer.okta.com/quickstart/#/okta-sign-in-page/dotnet/aspnet4)
 * Use the [Okta .NET SDK](https://github.com/okta/okta-sdk-dotnet) if you need to call [Okta APIs](https://developer.okta.com/docs/api/resources/users) for management tasks
-
-## Help
-
-Please post any questions on the [Okta Developer Forums](https://devforum.okta.com/). You can also email developers@okta.com if you would like to create a support ticket.
 
 ## License
 

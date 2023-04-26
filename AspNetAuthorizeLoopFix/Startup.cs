@@ -11,6 +11,7 @@ using IdentityModel.Client;
 using System;
 using System.Collections.Generic;
 using Microsoft.IdentityModel.Tokens;
+using IdentityModel;
 
 [assembly: OwinStartup(typeof(OktaAspNetExample.Startup))]
 
@@ -35,30 +36,26 @@ namespace OktaAspNetExample
 
             app.UseCookieAuthentication(new CookieAuthenticationOptions());
 
-            app.UseOpenIdConnectAuthentication(new OpenIdConnectAuthenticationOptions
-            {
+            app.UseOpenIdConnectAuthentication(new OpenIdConnectAuthenticationOptions {
                 ClientId = clientId,
                 ClientSecret = clientSecret,
                 Authority = authority,
                 RedirectUri = redirectUri,
+                // ResponseType = OpenIdConnectResponseType.Code,
                 ResponseType = OpenIdConnectResponseType.CodeIdToken,
                 Scope = OpenIdConnectScope.OpenIdProfile,
                 PostLogoutRedirectUri = postLogoutRedirectUri,
-                TokenValidationParameters = new TokenValidationParameters
-                {
+                TokenValidationParameters = new TokenValidationParameters {
                     NameClaimType = "name"
                 },
 
-                Notifications = new OpenIdConnectAuthenticationNotifications
-                {
-                    AuthorizationCodeReceived = async n => 
-                    {
+                Notifications = new OpenIdConnectAuthenticationNotifications {
+                    AuthorizationCodeReceived = async n => {
                         // Exchange code for access and ID tokens
                         var tokenClient = new TokenClient(authority + "/v1/token", clientId, clientSecret);
                         var tokenResponse = await tokenClient.RequestAuthorizationCodeAsync(n.Code, redirectUri);
 
-                        if (tokenResponse.IsError)
-                        {
+                        if (tokenResponse.IsError) {
                             throw new Exception(tokenResponse.Error);
                         }
 
@@ -69,25 +66,22 @@ namespace OktaAspNetExample
                         claims.Add(new Claim("id_token", tokenResponse.IdentityToken));
                         claims.Add(new Claim("access_token", tokenResponse.AccessToken));
 
-                        if (!string.IsNullOrEmpty(tokenResponse.RefreshToken))
-                        {
+                        if (!string.IsNullOrEmpty(tokenResponse.RefreshToken)) {
                             claims.Add(new Claim("refresh_token", tokenResponse.RefreshToken));
                         }
 
                         n.AuthenticationTicket.Identity.AddClaims(claims);
+                        n.AuthenticationTicket.Identity.AddClaim(new Claim(ClaimTypes.Role, "Administrators"));
 
                         return;
                     },
 
-                    RedirectToIdentityProvider = n =>
-                    {
+                    RedirectToIdentityProvider = n => {
                         // If signing out, add the id_token_hint
-                        if (n.ProtocolMessage.RequestType == OpenIdConnectRequestType.Logout)
-                        {
+                        if (n.ProtocolMessage.RequestType == OpenIdConnectRequestType.Logout) {
                             var idTokenClaim = n.OwinContext.Authentication.User.FindFirst("id_token");
 
-                            if (idTokenClaim != null)
-                            {
+                            if (idTokenClaim != null) {
                                 n.ProtocolMessage.IdTokenHint = idTokenClaim.Value;
                             }
 
